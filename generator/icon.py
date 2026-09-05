@@ -1,6 +1,6 @@
 from pathlib import Path
 
-ICON_EXTENSIONS = {".webp"}
+ICON_EXTENSIONS = {".webp", ".ico"}
 ICON_PATH_KEYS = ("ObjectPath", "AssetPathName", "ObjectName")
 
 
