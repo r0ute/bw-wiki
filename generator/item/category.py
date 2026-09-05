@@ -1,113 +1,27 @@
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..discover import discover_json
+from .cache import AssetCache
 
-CATEGORY_CLASSES = frozenset({"MistItemCategory", "MistItemCategory_C"})
-CATEGORY_GROUP_CLASSES = frozenset({"MistItemCategoryGroup", "MistItemCategoryGroup_C"})
+CATEGORY_CLASSES = frozenset(
+    {
+        "MistItemCategory",
+        "MistItemCategory_C",
+    }
+)
+
+CATEGORY_GROUP_CLASSES = frozenset(
+    {
+        "MistItemCategoryGroup",
+        "MistItemCategoryGroup_C",
+    }
+)
 
 CATEGORIES_GAME_PATH = "/Game/Mist/Data/Items/Categories/"
-
-
-def _objects(path: Path) -> list[dict[str, Any]]:
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-
-    if isinstance(raw, list):
-        return [value for value in raw if isinstance(value, dict)]
-
-    return [raw] if isinstance(raw, dict) else []
-
-
-def _reference(value: Any) -> str | None:
-    if not isinstance(value, dict):
-        return None
-
-    for key in ("ObjectPath", "AssetPathName", "ObjectName"):
-        raw = value.get(key)
-        if not isinstance(raw, str) or not raw:
-            continue
-
-        if raw.startswith("/Game/"):
-            return raw.split(".", 1)[0]
-
-        match = re.search(r"'([^']+)'", raw)
-        if match:
-            return match.group(1)
-
-    return None
-
-
-def _superstruct(obj: dict[str, Any]) -> str:
-    ref = _reference(obj.get("SuperStruct"))
-    if not ref:
-        return ""
-
-    return ref.rsplit("/", 1)[-1]
-
-
-def _name(obj: dict[str, Any]) -> str | None:
-    properties = obj.get("Properties")
-    if not isinstance(properties, dict):
-        return None
-
-    value = properties.get("Name")
-
-    if isinstance(value, dict):
-        value = value.get("LocalizedString") or value.get("SourceString")
-
-    return value.strip() if isinstance(value, str) and value.strip() else None
-
-
-def _package_path(obj: dict[str, Any]) -> str | None:
-    value = obj.get("Package")
-    return value if isinstance(value, str) and value.startswith("/Game/") else None
-
-
-def _parent(obj: dict[str, Any]) -> str | None:
-    properties = obj.get("Properties")
-    if not isinstance(properties, dict):
-        return None
-
-    return _reference(properties.get("Parent"))
-
-
-def _asset_path(obj: dict[str, Any]) -> str | None:
-    package = _package_path(obj)
-    if package:
-        return package
-
-    class_default_object = obj.get("ClassDefaultObject")
-    if isinstance(class_default_object, dict):
-        return _reference(class_default_object)
-
-    return None
-
-
-def _game_path(path: Path, assets_root: Path) -> str | None:
-    try:
-        relative = path.relative_to(assets_root)
-    except ValueError:
-        return None
-
-    parts = relative.parts
-
-    if len(parts) < 3 or parts[0] != "Bellwright" or parts[1] != "Content":
-        return None
-
-    return "/Game/" + "/".join(parts[2:]).rsplit(".", 1)[0]
-
-
-def _category_asset(path: Path, assets_root: Path) -> bool:
-    game_path = _game_path(path, assets_root)
-    return bool(game_path and game_path.startswith(CATEGORIES_GAME_PATH))
 
 
 @dataclass(slots=True)
@@ -119,33 +33,53 @@ class CategoryNode:
     parent_key: str | None
     is_group: bool
     children: list[str] = field(default_factory=list)
+    descendant_categories: tuple[str, ...] = ()
+    group_ancestors: tuple[str, ...] = ()
 
 
 class CategoryIndex:
     def __init__(self, nodes: dict[str, CategoryNode]):
         self.nodes = nodes
         self.by_class: dict[str, list[str]] = {}
+        self._roots: tuple[str, ...] = ()
 
         for key, node in nodes.items():
-            normalized = normalize_key(node.class_name)
-            self.by_class.setdefault(normalized, []).append(key)
+            self.by_class.setdefault(
+                normalize_key(node.class_name),
+                [],
+            ).append(key)
+
+        self._prepare_hierarchy()
 
     @classmethod
-    def from_assets(cls, assets_root: Path) -> "CategoryIndex":
-        nodes: dict[str, CategoryNode] = {}
-        pending: list[tuple[Path, str, str, str | None, bool]] = []
+    def from_assets(
+        cls,
+        assets: AssetCache,
+    ) -> "CategoryIndex":
+        pending: list[
+            tuple[
+                Path,
+                str,
+                str,
+                str | None,
+                bool,
+                str,
+            ]
+        ] = []
 
-        for path in discover_json(assets_root):
-            if not _category_asset(path, assets_root):
+        for path in assets.paths:
+            try:
+                path.relative_to(assets.categories_root)
+            except ValueError:
                 continue
 
-            objects = _objects(path)
+            objects = assets.objects(path)
 
             class_obj = next(
                 (
                     obj
                     for obj in objects
-                    if _superstruct(obj) in CATEGORY_CLASSES | CATEGORY_GROUP_CLASSES
+                    if superstruct(obj) in (CATEGORY_CLASSES | CATEGORY_GROUP_CLASSES)
                 ),
                 None,
             )
@@ -153,27 +87,30 @@ class CategoryIndex:
             if class_obj is None:
                 continue
 
-            superstruct = _superstruct(class_obj)
-            is_group = superstruct in CATEGORY_GROUP_CLASSES
-
             cdo = next(
-                (obj for obj in objects if isinstance(obj.get("Properties"), dict)),
+                (
+                    obj
+                    for obj in objects
+                    if isinstance(
+                        obj.get("Properties"),
+                        dict,
+                    )
+                ),
                 None,
             )
 
-            asset_path = _asset_path(class_obj)
-            if not asset_path:
-                asset_path = _asset_path(cdo or {})
+            asset_path = asset_path_for(class_obj) or asset_path_for(cdo or {})
 
-            if not asset_path:
-                continue
+            title = name_for(cdo or {})
 
-            title = _name(cdo or {})
-            if not title:
+            if not asset_path or not title:
                 continue
 
             class_name = str(class_obj.get("Name") or "").removesuffix("_C")
-            parent_path = _parent(cdo or {})
+
+            parent_path = parent_for(cdo or {})
+
+            is_group = superstruct(class_obj) in CATEGORY_GROUP_CLASSES
 
             pending.append(
                 (
@@ -182,29 +119,30 @@ class CategoryIndex:
                     class_name,
                     parent_path,
                     is_group,
+                    title,
                 )
             )
 
-        path_to_key = {asset_path: asset_path for _, asset_path, _, _, _ in pending}
+        keys = {asset_path for _, asset_path, _, _, _, _ in pending}
 
-        for path, key, class_name, parent_path, is_group in pending:
-            objects = _objects(path)
-
-            cdo = next(
-                (obj for obj in objects if isinstance(obj.get("Properties"), dict)),
-                {},
-            )
-
-            parent_key = path_to_key.get(parent_path)
-
-            nodes[key] = CategoryNode(
+        nodes = {
+            key: CategoryNode(
                 key=key,
                 class_name=class_name,
-                title=_name(cdo) or "",
+                title=title,
                 path=path,
-                parent_key=parent_key,
+                parent_key=(parent_path if parent_path in keys else None),
                 is_group=is_group,
             )
+            for (
+                path,
+                key,
+                class_name,
+                parent_path,
+                is_group,
+                title,
+            ) in pending
+        }
 
         for node in nodes.values():
             if node.parent_key in nodes:
@@ -212,75 +150,203 @@ class CategoryIndex:
 
         return cls(nodes)
 
-    def resolve_ref(self, value: Any) -> CategoryNode | None:
-        ref = _reference(value)
+    def _prepare_hierarchy(self) -> None:
+        self._roots = tuple(
+            sorted(
+                (node.key for node in self.nodes.values() if node.parent_key is None),
+                key=lambda key: self.nodes[key].title.casefold(),
+            )
+        )
+
+        depth: dict[str, int] = {}
+
+        for node in self.nodes.values():
+            current = node
+            seen: set[str] = set()
+            value = 0
+
+            while current.parent_key and current.key not in seen:
+                seen.add(current.key)
+                value += 1
+
+                current = self.nodes.get(current.parent_key)
+
+                if current is None:
+                    break
+
+            depth[node.key] = value
+
+        for node in sorted(
+            self.nodes.values(),
+            key=lambda value: depth[value.key],
+            reverse=True,
+        ):
+            if node.is_group:
+                node.descendant_categories = tuple(
+                    category
+                    for child_key in node.children
+                    for category in self.nodes[child_key].descendant_categories
+                )
+            else:
+                node.descendant_categories = (node.key,)
+
+        for node in self.nodes.values():
+            ancestors: list[str] = []
+            current = self.nodes.get(node.parent_key) if node.parent_key else None
+            seen: set[str] = set()
+
+            while current and current.key not in seen:
+                seen.add(current.key)
+
+                if current.is_group:
+                    ancestors.append(current.key)
+
+                current = (
+                    self.nodes.get(current.parent_key) if current.parent_key else None
+                )
+
+            ancestors.reverse()
+            node.group_ancestors = tuple(ancestors)
+
+    def resolve_ref(
+        self,
+        value: Any,
+    ) -> CategoryNode | None:
+        ref = reference(value)
+
         if not ref:
             return None
 
         if ref.startswith(CATEGORIES_GAME_PATH):
             node = self.nodes.get(ref)
+
             if node:
                 return node
 
-        key = ref.rsplit("/", 1)[-1]
-        matches = self.by_class.get(normalize_key(key), [])
+        matches = self.by_class.get(
+            normalize_key(ref.rsplit("/", 1)[-1]),
+            [],
+        )
 
-        if len(matches) == 1:
-            return self.nodes[matches[0]]
+        return self.nodes[matches[0]] if len(matches) == 1 else None
 
-        return None
+    def group_for(
+        self,
+        node: CategoryNode | None,
+    ) -> CategoryNode | None:
+        if not node:
+            return None
 
-    def category_for_ref(self, value: Any) -> CategoryNode | None:
-        return self.resolve_ref(value)
+        for key in reversed(node.group_ancestors):
+            return self.nodes[key]
 
-    def group_for(self, node: CategoryNode | None) -> CategoryNode | None:
-        seen: set[str] = set()
-
-        while node and node.key not in seen:
-            seen.add(node.key)
-
-            if node.is_group:
-                return node
-
-            node = self.nodes.get(node.parent_key) if node.parent_key else None
-
-        return None
+        return node if node.is_group else None
 
     def children(
         self,
         node: CategoryNode,
         categories_only: bool = True,
     ) -> list[CategoryNode]:
-        result = []
+        children = sorted(
+            (self.nodes[key] for key in node.children),
+            key=lambda child: child.title.casefold(),
+        )
 
-        for key in sorted(
-            node.children,
-            key=lambda value: self.nodes[value].title.lower(),
-        ):
-            child = self.nodes[key]
-
-            if not categories_only or not child.is_group:
-                result.append(child)
-
-        return result
+        return [
+            child for child in children if (not categories_only or not child.is_group)
+        ]
 
     def roots(self) -> list[CategoryNode]:
-        return sorted(
-            (node for node in self.nodes.values() if node.parent_key is None),
-            key=lambda node: node.title.lower(),
-        )
+        return [self.nodes[key] for key in self._roots]
 
     @staticmethod
     def slug(title: str) -> str:
-        return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "category"
+        return (
+            re.sub(
+                r"[^a-z0-9]+",
+                "-",
+                title.lower(),
+            ).strip("-")
+            or "category"
+        )
 
 
-def build_category_index(assets_root: Path) -> CategoryIndex:
-    return CategoryIndex.from_assets(assets_root)
+def reference(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+
+    for key in (
+        "ObjectPath",
+        "AssetPathName",
+        "ObjectName",
+    ):
+        raw = value.get(key)
+
+        if not isinstance(raw, str) or not raw:
+            continue
+
+        if raw.startswith("/Game/"):
+            return raw.split(".", 1)[0]
+
+        match = re.search(
+            r"'([^']+)'",
+            raw,
+        )
+
+        if match:
+            return match.group(1)
+
+    return None
 
 
-def category_slug(value: str) -> str:
-    return CategoryIndex.slug(value)
+def superstruct(obj: dict[str, Any]) -> str:
+    ref = reference(obj.get("SuperStruct"))
+
+    return ref.rsplit("/", 1)[-1] if ref else ""
+
+
+def name_for(
+    obj: dict[str, Any],
+) -> str | None:
+    properties = obj.get("Properties")
+
+    if not isinstance(properties, dict):
+        return None
+
+    value = properties.get("Name")
+
+    if isinstance(value, dict):
+        value = value.get("LocalizedString") or value.get("SourceString")
+
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def parent_for(
+    obj: dict[str, Any],
+) -> str | None:
+    properties = obj.get("Properties")
+
+    return reference(properties.get("Parent")) if isinstance(properties, dict) else None
+
+
+def asset_path_for(
+    obj: dict[str, Any],
+) -> str | None:
+    package = obj.get("Package")
+
+    if isinstance(package, str) and package.startswith("/Game/"):
+        return package
+
+    class_default_object = obj.get("ClassDefaultObject")
+
+    return (
+        reference(class_default_object)
+        if isinstance(
+            class_default_object,
+            dict,
+        )
+        else None
+    )
 
 
 def normalize_key(value: str) -> str:
@@ -289,7 +355,3 @@ def normalize_key(value: str) -> str:
         "",
         value.lower().removesuffix("_c"),
     )
-
-
-def normalize_category_key(value: str) -> str:
-    return normalize_key(value)
