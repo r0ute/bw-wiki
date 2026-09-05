@@ -385,7 +385,7 @@ def _write_category_pages(
             node,
         )
 
-        relative_depth = len(output.relative_to(docs).parts)
+        relative_depth = len(output.relative_to(docs).parts) - 1
         icon_prefix = "../" * relative_depth
 
         headers, rows = _rows(
