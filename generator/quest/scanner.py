@@ -2,24 +2,22 @@
 
 from pathlib import Path
 
-from ..discover import discover_json
+from .cache import QUEST_ROOT, QuestCache
 from .model import Quest
 from .parser import ObjectIndex, parse_quest
-from .reader import read_objects
 
-QUEST_ROOT = Path("Bellwright/Content/Mist/Data/Quests")
 CATEGORY_BLACKLIST = {"BaseBringItemQuest"}
 
 
-def _categories(assets: Path) -> set[str]:
-    """Discover quest categories from the extracted quest directory."""
+def _categories(assets: Path) -> dict[str, str]:
+    """Discover quest categories and build a case-insensitive lookup."""
     root = assets / QUEST_ROOT
 
     if not root.is_dir():
-        return set()
+        return {}
 
     return {
-        path.name
+        path.name.casefold(): path.name
         for path in root.iterdir()
         if path.is_dir() and path.name not in CATEGORY_BLACKLIST
     }
@@ -27,54 +25,15 @@ def _categories(assets: Path) -> set[str]:
 
 def _category(
     relative: Path,
-    categories: set[str],
+    categories: dict[str, str],
 ) -> str | None:
-    configured = {name.casefold(): name for name in categories}
-
     for part in relative.parts:
-        category = configured.get(part.casefold())
+        category = categories.get(part.casefold())
 
         if category:
             return category
 
     return None
-
-
-def _index_objects(
-    paths: list[Path],
-) -> dict[Path, ObjectIndex]:
-    indexes: dict[Path, ObjectIndex] = {}
-
-    for path in paths:
-        objects = read_objects(path)
-
-        for obj in objects:
-            name = obj.get("Name")
-
-            if not isinstance(name, str):
-                continue
-
-            name = name.strip()
-
-            if not name or name.startswith("Default__"):
-                continue
-
-            if name.endswith("_C"):
-                name = name[:-2]
-
-            name = name.strip()
-
-            if not name:
-                continue
-
-            indexes.setdefault(path.parent, {})[name] = (
-                path,
-                objects,
-            )
-
-            break
-
-    return indexes
 
 
 def _sort_quests(
@@ -96,13 +55,12 @@ def discover_quests(
 ) -> dict[str, list[Quest]]:
     """Discover quests belonging to all discovered categories."""
     categories = _categories(assets)
+    quests_by_category = {category: [] for category in categories.values()}
 
-    quests_by_category = {category: [] for category in categories}
+    cache = QuestCache(assets)
+    directory_indexes: dict[Path, ObjectIndex] = cache.directory_indexes()
 
-    paths = list(discover_json(assets))
-    directory_indexes = _index_objects(paths)
-
-    for path in paths:
+    for path in cache.paths():
         try:
             relative = path.relative_to(assets)
         except ValueError:
@@ -116,13 +74,11 @@ def discover_quests(
         if category is None:
             continue
 
-        objects = read_objects(path)
-
         quest = parse_quest(
             path=path,
             relative_path=relative,
             category=category,
-            objects=objects,
+            objects=cache.objects(path),
             directory_objects=directory_indexes.get(
                 path.parent,
                 {},
