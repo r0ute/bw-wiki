@@ -109,7 +109,6 @@ class CategoryIndex:
             class_name = str(class_obj.get("Name") or "").removesuffix("_C")
 
             parent_path = parent_for(cdo or {})
-
             is_group = superstruct(class_obj) in CATEGORY_GROUP_CLASSES
 
             pending.append(
@@ -176,19 +175,25 @@ class CategoryIndex:
 
             depth[node.key] = value
 
+        # Build descendant category lists bottom-up.
+        #
+        # Every category includes itself, and also inherits
+        # descendant categories from child nodes. Groups only
+        # inherit their children's categories.
         for node in sorted(
             self.nodes.values(),
             key=lambda value: depth[value.key],
             reverse=True,
         ):
-            if node.is_group:
-                node.descendant_categories = tuple(
-                    category
-                    for child_key in node.children
-                    for category in self.nodes[child_key].descendant_categories
-                )
-            else:
-                node.descendant_categories = (node.key,)
+            descendants: list[str] = []
+
+            if not node.is_group:
+                descendants.append(node.key)
+
+            for child_key in node.children:
+                descendants.extend(self.nodes[child_key].descendant_categories)
+
+            node.descendant_categories = tuple(descendants)
 
         for node in self.nodes.values():
             ancestors: list[str] = []
@@ -299,7 +304,9 @@ def reference(value: Any) -> str | None:
     return None
 
 
-def superstruct(obj: dict[str, Any]) -> str:
+def superstruct(
+    obj: dict[str, Any],
+) -> str:
     ref = reference(obj.get("SuperStruct"))
 
     return ref.rsplit("/", 1)[-1] if ref else ""
