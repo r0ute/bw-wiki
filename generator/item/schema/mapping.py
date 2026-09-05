@@ -5,10 +5,8 @@ from importlib.util import find_spec
 from pkgutil import iter_modules
 from typing import Any
 
-CATEGORY_SCHEMAS = {
-    "Weapons": "weapons",
-    "OneHanded": "weapons",
-    "Two-handed": "weapons",
+CATEGORY_SCHEMA_OVERRIDES = {
+    "<category_name>": "<schema_name>",
 }
 
 _SCHEMA_PACKAGE = "generator.item.schema"
@@ -45,22 +43,41 @@ def _schema_names() -> tuple[str, ...]:
 _SCHEMA_NAMES = _schema_names()
 
 
-def _category_schema(category_node: Any) -> str | None:
-    names = (
+def _category_names(index: Any, category_node: Any) -> tuple[str, ...]:
+    names = [
         str(getattr(category_node, "class_name", "") or ""),
         str(getattr(category_node, "title", "") or ""),
-    )
+    ]
 
-    normalized_names = tuple(_normalize(name) for name in names if name)
+    for group_key in getattr(category_node, "group_ancestors", ()):
+        group = getattr(index, "nodes", {}).get(group_key)
+
+        if group is None:
+            continue
+
+        names.extend(
+            (
+                str(getattr(group, "class_name", "") or ""),
+                str(getattr(group, "title", "") or ""),
+            )
+        )
+
+    return tuple(_normalize(name) for name in names if name)
+
+
+def _autodiscovered_schema(
+    index: Any,
+    category_node: Any,
+) -> str | None:
+    names = _category_names(index, category_node)
 
     for schema_name in _SCHEMA_NAMES:
         normalized_schema = _normalize(schema_name)
 
-        if any(normalized_schema in name for name in normalized_names):
+        if any(normalized_schema in name for name in names):
             return schema_name
 
-    class_name = str(getattr(category_node, "class_name", "") or "")
-    return CATEGORY_SCHEMAS.get(class_name)
+    return None
 
 
 def _schema_exists(module_name: str) -> bool:
@@ -78,7 +95,7 @@ def _warn_default(category_node: Any) -> None:
         return
 
     _WARNED_DEFAULTS.add(category)
-    print(f"\t\tWARNING: using default item schema for category '{category}'")
+    print(f"\tWARNING: using default item schema for category '{category}'")
 
 
 def schema_module(
@@ -86,7 +103,14 @@ def schema_module(
     category_node: Any,
     template: str,
 ):
-    module_name = _category_schema(category_node)
+    module_name = _autodiscovered_schema(
+        index,
+        category_node,
+    )
+
+    if module_name is None:
+        class_name = str(getattr(category_node, "class_name", "") or "")
+        module_name = CATEGORY_SCHEMA_OVERRIDES.get(class_name)
 
     if module_name:
         module_path = f"{_SCHEMA_PACKAGE}.{module_name}"
