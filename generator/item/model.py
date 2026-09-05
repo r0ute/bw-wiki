@@ -8,7 +8,6 @@ from typing import Any
 @dataclass(slots=True)
 class Item:
     path: Path
-    source_family: str
     template: str
     category_key: str
     category: str

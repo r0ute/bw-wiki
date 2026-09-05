@@ -21,7 +21,6 @@ def _fields_for(item: Item, index: category.CategoryIndex) -> dict[str, FieldExt
 def _item_context(item: Item, icon_index, icon_out: Path, icon_prefix: str):
     context = {
         "path": item.path,
-        "source_family": item.source_family,
         "template": item.template,
         "category": item.category,
         "category_group": item.category_group or "",
