@@ -389,23 +389,42 @@ def _write_category_pages(
         grand_parent = None
         grand_parent_path = None
 
-        if ancestors:
-            parent_node = ancestors[-1]
+        ancestor_pages = [
+            (
+                ancestor,
+                docs
+                / _group_path(
+                    index,
+                    ancestor,
+                ),
+            )
+            for ancestor in ancestors
+        ]
+
+        valid_ancestors = [
+            (ancestor, path) for ancestor, path in ancestor_pages if path != output
+        ]
+
+        if valid_ancestors:
+            parent_node, parent_output = valid_ancestors[-1]
 
             parent = parent_node.title
-            parent_path = _group_path(
-                index,
-                parent_node,
-            )
+            parent_path = parent_output.relative_to(
+                docs,
+            ).as_posix()
 
-            if len(ancestors) > 1:
-                grand_parent_node = ancestors[-2]
+            parent_index = ancestors.index(parent_node)
 
-                grand_parent = grand_parent_node.title
-                grand_parent_path = _group_path(
+            if parent_index > 0:
+                grand_parent_node = ancestors[parent_index - 1]
+                grand_parent_output = docs / _group_path(
                     index,
                     grand_parent_node,
                 )
+
+                if grand_parent_output != parent_output:
+                    grand_parent = grand_parent_node.title
+                    grand_parent_path = grand_parent_output.relative_to(docs).as_posix()
 
         relative_depth = len(output.relative_to(docs).parts) - 1
         icon_prefix = "../" * relative_depth
