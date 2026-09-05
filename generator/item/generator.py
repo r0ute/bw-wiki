@@ -127,14 +127,79 @@ def _group_ancestors(
     return ancestors
 
 
+def _categories_under(
+    index: category.CategoryIndex,
+    node: category.CategoryNode,
+    by_category,
+) -> list[category.CategoryNode]:
+    if not node.is_group:
+        return [node] if by_category.get(node.key) else []
+
+    categories = []
+
+    for child in index.children(
+        node,
+        categories_only=False,
+    ):
+        categories.extend(
+            _categories_under(
+                index,
+                child,
+                by_category,
+            )
+        )
+
+    return categories
+
+
+def _is_single_category_group(
+    index: category.CategoryIndex,
+    node: category.CategoryNode,
+    by_category,
+) -> bool:
+    return (
+        node.is_group
+        and len(
+            _categories_under(
+                index,
+                node,
+                by_category,
+            )
+        )
+        == 1
+    )
+
+
 def _category_path(
     index: category.CategoryIndex,
     node: category.CategoryNode,
+    by_category=None,
 ) -> str:
-    parts = [
-        category.CategoryIndex.slug(group.title)
-        for group in _group_ancestors(index, node)
-    ]
+    ancestors = _group_ancestors(index, node)
+
+    parts = [category.CategoryIndex.slug(group.title) for group in ancestors]
+
+    if by_category is not None:
+        singleton_group = None
+
+        for group in reversed(ancestors):
+            if _is_single_category_group(
+                index,
+                group,
+                by_category,
+            ):
+                singleton_group = group
+                break
+
+        if singleton_group is not None:
+            singleton_index = ancestors.index(singleton_group)
+
+            parts = [
+                category.CategoryIndex.slug(group.title)
+                for group in ancestors[: singleton_index + 1]
+            ]
+
+            return "/".join(["items", *parts]) + ".md"
 
     parts.append(category.CategoryIndex.slug(node.title) + ".md")
 
@@ -159,8 +224,13 @@ def _category_link(
     node: category.CategoryNode,
     docs: Path,
     source: Path,
+    by_category=None,
 ) -> str:
-    target = docs / _category_path(index, node)
+    target = docs / _category_path(
+        index,
+        node,
+        by_category,
+    )
 
     return _relative_link(source, target)
 
@@ -202,7 +272,22 @@ def _has_items(
 
     return any(
         _has_items(child, by_category, index)
-        for child in index.children(node, categories_only=False)
+        for child in index.children(
+            node,
+            categories_only=False,
+        )
+    )
+
+
+def _group_page_needed(
+    node: category.CategoryNode,
+    by_category,
+    index: category.CategoryIndex,
+) -> bool:
+    return not _is_single_category_group(
+        index,
+        node,
+        by_category,
     )
 
 
@@ -229,12 +314,31 @@ def _group_tree(
 
     for child in children:
         if child.is_group:
-            link = _group_link(
+            if _is_single_category_group(
                 index,
                 child,
-                docs,
-                source,
-            )
+                by_category,
+            ):
+                categories = _categories_under(
+                    index,
+                    child,
+                    by_category,
+                )
+
+                link = _category_link(
+                    index,
+                    categories[0],
+                    docs,
+                    source,
+                    by_category,
+                )
+            else:
+                link = _group_link(
+                    index,
+                    child,
+                    docs,
+                    source,
+                )
 
             lines.append(f"- [{child.title}]({link})")
             continue
@@ -244,6 +348,7 @@ def _group_tree(
             child,
             docs,
             source,
+            by_category,
         )
 
         lines.append(f"- [{child.title}]({link})")
@@ -269,19 +374,18 @@ def _write_category_pages(
         if not items:
             continue
 
+        output = docs / _category_path(
+            index,
+            node,
+            by_category,
+        )
+
         ancestors = _group_ancestors(
             index,
             node,
         )
 
-        output = docs / "items"
-
-        for group in ancestors:
-            output /= category.CategoryIndex.slug(group.title)
-
-        output /= category.CategoryIndex.slug(node.title) + ".md"
-
-        relative_depth = len(ancestors) + 1
+        relative_depth = len(output.relative_to(docs).parts)
         icon_prefix = "../" * relative_depth
 
         headers, rows = _rows(
@@ -325,13 +429,24 @@ def _write_group_pages(
         (
             node
             for node in index.nodes.values()
-            if node.is_group and _has_items(node, by_category, index)
+            if (
+                node.is_group
+                and _has_items(node, by_category, index)
+                and _group_page_needed(
+                    node,
+                    by_category,
+                    index,
+                )
+            )
         ),
         key=lambda node: node.title.casefold(),
     )
 
     for node in groups:
-        output = docs / _group_path(index, node)
+        output = docs / _group_path(
+            index,
+            node,
+        )
 
         source = output
 
@@ -344,14 +459,42 @@ def _write_group_pages(
                     node,
                     categories_only=False,
                 )
-                if _has_items(child, by_category, index)
+                if _has_items(
+                    child,
+                    by_category,
+                    index,
+                )
             ),
             key=lambda child: child.title.casefold(),
         ):
             if child.is_group:
-                target = docs / _group_path(index, child)
+                if _is_single_category_group(
+                    index,
+                    child,
+                    by_category,
+                ):
+                    categories = _categories_under(
+                        index,
+                        child,
+                        by_category,
+                    )
+
+                    target = docs / _category_path(
+                        index,
+                        categories[0],
+                        by_category,
+                    )
+                else:
+                    target = docs / _group_path(
+                        index,
+                        child,
+                    )
             else:
-                target = docs / _category_path(index, child)
+                target = docs / _category_path(
+                    index,
+                    child,
+                    by_category,
+                )
 
             links.append(
                 (
@@ -430,11 +573,41 @@ def generate(
     pages: list[dict] = []
 
     for node in index.roots():
-        if not _has_items(node, by_category, index):
+        if not _has_items(
+            node,
+            by_category,
+            index,
+        ):
             continue
 
         if node.is_group:
-            page = group_by_node.get(node.key)
+            if _group_page_needed(
+                node,
+                by_category,
+                index,
+            ):
+                page = group_by_node.get(node.key)
+            else:
+                categories = _categories_under(
+                    index,
+                    node,
+                    by_category,
+                )
+
+                if len(categories) == 1:
+                    category_node = categories[0]
+                    slug = _category_path(
+                        index,
+                        category_node,
+                        by_category,
+                    ).removesuffix(".md")
+
+                    page = {
+                        "title": node.title,
+                        "slug": slug,
+                    }
+                else:
+                    page = None
         else:
             page = category_by_node.get(node.key)
 
