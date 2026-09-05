@@ -6,7 +6,15 @@ from pkgutil import iter_modules
 from typing import Any
 
 CATEGORY_SCHEMA_OVERRIDES = {
-    "<category_name>": "<schema_name>",
+    "Decorations": "minimal",
+    "Equipment": "minimal",
+    "Knowledge Books": "minimal",
+    "Medicine": "minimal",
+    "Liquids": "minimal",
+    "Other": "minimal",
+    "Resources": "minimal",
+    "Quest Item": "minimal",
+    "Seeds": "minimal",
 }
 
 _SCHEMA_PACKAGE = "generator.item.schema"
