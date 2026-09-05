@@ -22,7 +22,7 @@ def generate(
         f"Quests indexed: {sum(len(quests) for quests in quests_by_category.values())}"
     )
 
-    quest_docs = docs / "quest"
+    quest_docs = docs / "quests"
     quest_docs.mkdir(
         parents=True,
         exist_ok=True,
@@ -44,12 +44,12 @@ def generate(
             tree,
         )
 
-        print(f"\tGENERATED quest/{slug}.md ({len(quests)} quests)")
+        print(f"\tGENERATED quests/{slug}.md ({len(quests)} quests)")
 
         pages.append(
             {
                 "title": category,
-                "slug": f"quest/{slug}",
+                "slug": f"quests/{slug}",
             }
         )
 

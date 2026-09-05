@@ -321,7 +321,7 @@ def write_category(
 ) -> None:
     """Write a quest category."""
     directory = docs / category_slug
-    category_url = f"/quest/{category_slug}"
+    category_url = f"/quests/{category_slug}"
 
     _write_directory(
         tree,
