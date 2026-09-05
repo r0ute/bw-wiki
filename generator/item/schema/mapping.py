@@ -51,11 +51,23 @@ def _schema_names() -> tuple[str, ...]:
 _SCHEMA_NAMES = _schema_names()
 
 
-def _category_names(index: Any, category_node: Any) -> tuple[str, ...]:
+def _category_names(
+    index: Any,
+    category_node: Any,
+) -> tuple[str, ...]:
     names = [
         str(getattr(category_node, "class_name", "") or ""),
         str(getattr(category_node, "title", "") or ""),
     ]
+
+    return tuple(_normalize(name) for name in names if name)
+
+
+def _group_names(
+    index: Any,
+    category_node: Any,
+) -> tuple[str, ...]:
+    names: list[str] = []
 
     for group_key in getattr(category_node, "group_ancestors", ()):
         group = getattr(index, "nodes", {}).get(group_key)
@@ -73,12 +85,9 @@ def _category_names(index: Any, category_node: Any) -> tuple[str, ...]:
     return tuple(_normalize(name) for name in names if name)
 
 
-def _autodiscovered_schema(
-    index: Any,
-    category_node: Any,
+def _find_schema(
+    names: tuple[str, ...],
 ) -> str | None:
-    names = _category_names(index, category_node)
-
     for schema_name in _SCHEMA_NAMES:
         normalized_schema = _normalize(schema_name)
 
@@ -86,6 +95,28 @@ def _autodiscovered_schema(
             return schema_name
 
     return None
+
+
+def _autodiscovered_schema(
+    index: Any,
+    category_node: Any,
+) -> str | None:
+    schema = _find_schema(
+        _category_names(
+            index,
+            category_node,
+        )
+    )
+
+    if schema is not None:
+        return schema
+
+    return _find_schema(
+        _group_names(
+            index,
+            category_node,
+        )
+    )
 
 
 def _schema_exists(module_name: str) -> bool:

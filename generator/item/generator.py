@@ -412,7 +412,13 @@ def _write_category_pages(
 
         relative = output.relative_to(docs).as_posix()
 
-        print(f"\tGENERATED {relative} ({len(items)} items)")
+        schema = schema_module(
+            index,
+            node,
+            items[0].template,
+        ).__name__.rsplit(".", 1)[-1]
+
+        print(f"\tGENERATED {relative} ({len(items)} items) using schema {schema}")
 
         pages.append(
             {
