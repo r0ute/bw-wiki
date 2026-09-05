@@ -144,12 +144,17 @@ def _category_path(
 def _relative_link(source: Path, target: Path) -> str:
     import os
 
-    return Path(
+    link = Path(
         os.path.relpath(
             target,
             source.parent,
         )
     ).as_posix()
+
+    if link.endswith(".md"):
+        link = link[:-3]
+
+    return link
 
 
 def _tree_lines(
@@ -281,9 +286,6 @@ def _write_category_pages(
             icon_prefix,
         )
 
-        # Items no longer have a generated index.md group
-        # page to use as their Jekyll parent. Keep the
-        # hierarchy represented by items/items.md instead.
         markdown.write_page(
             output,
             node.title,
@@ -292,6 +294,11 @@ def _write_category_pages(
         )
 
         generated.append(str(output.relative_to(docs)).replace("\\", "/"))
+
+        print(
+            f"\tGENERATED {output.relative_to(docs).as_posix()} "
+            f"({len(by_category.get(node.key, []))} items)"
+        )
 
     return generated
 
