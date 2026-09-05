@@ -48,18 +48,15 @@ def _rows(
 
     rows = []
 
-    for item, fields in zip(
-        items,
-        field_sets,
-    ):
+    for item, fields in zip(items, field_sets):
         context = {
             "path": item.path,
             "template": item.template,
             "category": item.category,
-            "category_group": (item.category_group or ""),
+            "category_group": item.category_group or "",
             "icon": "",
             "damaged_item": item.damaged_item,
-            "unbroken_parent": (item.unbroken_parent),
+            "unbroken_parent": item.unbroken_parent,
         }
 
         icon_path = icon.find_icon(
@@ -94,40 +91,111 @@ def _rows(
     return headers, rows
 
 
+def _group_ancestors(
+    index: category.CategoryIndex,
+    node: category.CategoryNode,
+) -> list[category.CategoryNode]:
+    return [index.nodes[key] for key in node.group_ancestors]
+
+
+def _categories_under(
+    index: category.CategoryIndex,
+    node: category.CategoryNode,
+    by_category,
+) -> list[category.CategoryNode]:
+    if not node.is_group:
+        return [node] if by_category.get(node.key) else []
+
+    return [
+        index.nodes[key] for key in node.descendant_categories if by_category.get(key)
+    ]
+
+
+def _is_single_category_group(
+    index: category.CategoryIndex,
+    node: category.CategoryNode,
+    by_category,
+) -> bool:
+    return (
+        node.is_group
+        and len(
+            _categories_under(
+                index,
+                node,
+                by_category,
+            )
+        )
+        == 1
+    )
+
+
 def _category_path(
-    index,
-    node,
-    populated,
-):
-    ancestors = [index.nodes[key] for key in node.group_ancestors]
+    index: category.CategoryIndex,
+    node: category.CategoryNode,
+    by_category,
+) -> str:
+    ancestors = _group_ancestors(
+        index,
+        node,
+    )
 
     parts = [index.slug(group.title) for group in ancestors]
+
+    singleton_group = None
 
     for group in reversed(ancestors):
-        if len(populated.get(group.key, ())) == 1:
-            return (
-                "/".join(
-                    [
-                        "items",
-                        *parts[: ancestors.index(group) + 1],
-                    ]
-                )
-                + ".md"
+        if _is_single_category_group(
+            index,
+            group,
+            by_category,
+        ):
+            singleton_group = group
+            break
+
+    if singleton_group is not None:
+        singleton_index = ancestors.index(singleton_group)
+
+        parts = [index.slug(group.title) for group in ancestors[: singleton_index + 1]]
+
+        return (
+            "/".join(
+                [
+                    "items",
+                    *parts,
+                ]
             )
+            + ".md"
+        )
 
     parts.append(index.slug(node.title) + ".md")
 
-    return "/".join(["items", *parts])
+    return "/".join(
+        [
+            "items",
+            *parts,
+        ]
+    )
 
 
-def _group_path(index, node):
-    ancestors = [index.nodes[key] for key in node.group_ancestors]
+def _group_path(
+    index: category.CategoryIndex,
+    node: category.CategoryNode,
+) -> str:
+    ancestors = _group_ancestors(
+        index,
+        node,
+    )
 
     parts = [index.slug(group.title) for group in ancestors]
 
     parts.append(index.slug(node.title) + ".md")
 
-    return "/".join(["items", *parts])
+    return "/".join(
+        [
+            "items",
+            *parts,
+        ]
+    )
 
 
 def _relative_link(
@@ -145,31 +213,61 @@ def _relative_link(
 
 
 def _category_link(
-    index,
-    node,
-    docs,
-    source,
-    populated,
-):
+    index: category.CategoryIndex,
+    node: category.CategoryNode,
+    docs: Path,
+    source: Path,
+    by_category,
+) -> str:
+    target = docs / _category_path(
+        index,
+        node,
+        by_category,
+    )
+
     return _relative_link(
-        docs
-        / _category_path(
+        source,
+        target,
+    )
+
+
+def _has_items(
+    index: category.CategoryIndex,
+    node: category.CategoryNode,
+    by_category,
+) -> bool:
+    if not node.is_group:
+        return bool(by_category.get(node.key))
+
+    return bool(
+        _categories_under(
             index,
             node,
-            populated,
-        ),
-        docs / source,
+            by_category,
+        )
+    )
+
+
+def _group_page_needed(
+    index: category.CategoryIndex,
+    node: category.CategoryNode,
+    by_category,
+) -> bool:
+    return not _is_single_category_group(
+        index,
+        node,
+        by_category,
     )
 
 
 def _group_tree(
-    index,
-    node,
-    populated,
-    docs,
-    source,
-    indent=0,
-):
+    index: category.CategoryIndex,
+    node: category.CategoryNode,
+    by_category,
+    docs: Path,
+    source: Path,
+    indent: int = 0,
+) -> list[str]:
     lines: list[str] = []
 
     children = sorted(
@@ -179,9 +277,10 @@ def _group_tree(
                 node,
                 categories_only=False,
             )
-            if populated.get(
-                child.key,
-                (child.key,) if not child.is_group else (),
+            if _has_items(
+                index,
+                child,
+                by_category,
             )
         ),
         key=lambda child: child.title.casefold(),
@@ -191,23 +290,26 @@ def _group_tree(
 
     for child in children:
         if child.is_group:
-            categories = populated.get(
-                child.key,
-                (),
+            categories = _categories_under(
+                index,
+                child,
+                by_category,
             )
 
             if not categories:
                 continue
 
-            if len(categories) == 1:
-                category_node = index.nodes[categories[0]]
-
+            if _is_single_category_group(
+                index,
+                child,
+                by_category,
+            ):
                 link = _category_link(
                     index,
-                    category_node,
+                    categories[0],
                     docs,
                     source,
-                    populated,
+                    by_category,
                 )
 
                 lines.append(f"{prefix}- [{child.title}]({link})")
@@ -218,37 +320,38 @@ def _group_tree(
                     _group_tree(
                         index,
                         child,
-                        populated,
+                        by_category,
                         docs,
                         source,
                         indent + 1,
                     )
                 )
-        else:
-            link = _category_link(
-                index,
-                child,
-                docs,
-                source,
-                populated,
-            )
 
-            lines.append(f"{prefix}- [{child.title}]({link})")
+            continue
+
+        link = _category_link(
+            index,
+            child,
+            docs,
+            source,
+            by_category,
+        )
+
+        lines.append(f"{prefix}- [{child.title}]({link})")
 
     return lines
 
 
 def _write_category_pages(
-    index,
+    index: category.CategoryIndex,
     by_category,
-    populated,
-    docs,
+    docs: Path,
     icon_index,
-    icon_out,
-):
+    icon_out: Path,
+) -> list[dict]:
     pages: list[dict] = []
 
-    roots = {node.key: node for node in index.roots() if node.is_group}
+    root_groups = {node.key: node for node in index.roots() if node.is_group}
 
     for node in sorted(
         (
@@ -263,10 +366,13 @@ def _write_category_pages(
         output = docs / _category_path(
             index,
             node,
-            populated,
+            by_category,
         )
 
-        ancestors = [index.nodes[key] for key in node.group_ancestors]
+        ancestors = _group_ancestors(
+            index,
+            node,
+        )
 
         parent = None
         parent_path = None
@@ -274,15 +380,10 @@ def _write_category_pages(
         if ancestors:
             root_group = ancestors[0]
 
-            if (
-                root_group.key in roots
-                and len(
-                    populated.get(
-                        root_group.key,
-                        (),
-                    )
-                )
-                != 1
+            if root_group.key in root_groups and _group_page_needed(
+                index,
+                root_group,
+                by_category,
             ):
                 parent = root_group.title
                 parent_path = _group_path(
@@ -325,10 +426,10 @@ def _write_category_pages(
 
 
 def _write_group_pages(
-    index,
-    populated,
-    docs,
-):
+    index: category.CategoryIndex,
+    by_category,
+    docs: Path,
+) -> list[dict]:
     pages: list[dict] = []
 
     groups = sorted(
@@ -337,13 +438,16 @@ def _write_group_pages(
             for node in index.roots()
             if (
                 node.is_group
-                and len(
-                    populated.get(
-                        node.key,
-                        (),
-                    )
+                and _has_items(
+                    index,
+                    node,
+                    by_category,
                 )
-                > 1
+                and _group_page_needed(
+                    index,
+                    node,
+                    by_category,
+                )
             )
         ),
         key=lambda node: node.title.casefold(),
@@ -358,7 +462,7 @@ def _write_group_pages(
         tree = _group_tree(
             index,
             node,
-            populated,
+            by_category,
             docs,
             output,
         )
@@ -371,7 +475,10 @@ def _write_group_pages(
 
         relative = output.relative_to(docs).as_posix()
 
-        print(f"\tGENERATED {relative} ({len(populated[node.key])} categories)")
+        print(
+            f"\tGENERATED {relative} "
+            f"({len(_categories_under(index, node, by_category))} categories)"
+        )
 
         pages.append(
             {
@@ -432,18 +539,9 @@ def generate(
     for item in items:
         by_category[item.category_key].append(item)
 
-    populated = {
-        node.key: tuple(
-            key for key in node.descendant_categories if by_category.get(key)
-        )
-        for node in index.nodes.values()
-        if node.is_group
-    }
-
     category_pages = _write_category_pages(
         index,
         by_category,
-        populated,
         docs,
         icon_index,
         icon_out,
@@ -451,7 +549,7 @@ def generate(
 
     group_pages = _write_group_pages(
         index,
-        populated,
+        by_category,
         docs,
     )
 
@@ -462,38 +560,52 @@ def generate(
     pages: list[dict] = []
 
     for node in index.roots():
+        if not _has_items(
+            index,
+            node,
+            by_category,
+        ):
+            continue
+
         if node.is_group:
-            populated_categories = populated.get(
-                node.key,
-                (),
-            )
-
-            if not populated_categories:
-                continue
-
-            if len(populated_categories) > 1:
+            if _group_page_needed(
+                index,
+                node,
+                by_category,
+            ):
                 page = group_by_node.get(node.key)
             else:
-                category_node = index.nodes[populated_categories[0]]
+                categories = _categories_under(
+                    index,
+                    node,
+                    by_category,
+                )
 
-                page = {
-                    "title": node.title,
-                    "slug": _category_path(
-                        index,
-                        category_node,
-                        populated,
-                    ).removesuffix(".md"),
-                }
+                if len(categories) == 1:
+                    category_node = categories[0]
+
+                    page = {
+                        "title": node.title,
+                        "slug": _category_path(
+                            index,
+                            category_node,
+                            by_category,
+                        ).removesuffix(".md"),
+                    }
+                else:
+                    page = None
         else:
             page = category_by_node.get(node.key)
 
-        if page:
-            pages.append(
-                {
-                    "title": page["title"],
-                    "slug": page["slug"],
-                }
-            )
+        if not page:
+            continue
+
+        pages.append(
+            {
+                "title": page["title"],
+                "slug": page["slug"],
+            }
+        )
 
     print(f"Item definitions discovered: {len(items)}")
 
