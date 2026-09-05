@@ -214,10 +214,73 @@ def _tree_lines(
     return lines
 
 
+def _tree_lines(
+    index: category.CategoryIndex,
+    node: category.CategoryNode,
+    docs: Path,
+    source: Path,
+    by_category,
+    indent: int = 0,
+) -> list[str]:
+    """
+    Render the complete category hierarchy.
+
+    Groups are rendered as plain tree nodes.
+    Actual item categories are rendered as links.
+    """
+
+    lines: list[str] = []
+
+    children = sorted(
+        index.children(
+            node,
+            categories_only=False,
+        ),
+        key=lambda child: child.title.casefold(),
+    )
+
+    for child in children:
+        padding = "  " * indent
+
+        if child.is_group:
+            lines.append(f"{padding}- {child.title}")
+
+            lines.extend(
+                _tree_lines(
+                    index,
+                    child,
+                    docs,
+                    source,
+                    by_category,
+                    indent + 1,
+                )
+            )
+
+            continue
+
+        if not by_category.get(child.key):
+            continue
+
+        target = docs / _category_path(
+            index,
+            child,
+        )
+
+        link = _relative_link(
+            source,
+            target,
+        )
+
+        lines.append(f"{padding}- [{child.title}]({link})")
+
+    return lines
+
+
 def _root_tree(
     index: category.CategoryIndex,
     docs: Path,
     source: Path,
+    by_category,
 ) -> list[str]:
     lines: list[str] = []
 
@@ -231,10 +294,14 @@ def _root_tree(
                     node,
                     docs,
                     source,
+                    by_category,
                     indent=1,
                 )
             )
         else:
+            if not by_category.get(node.key):
+                continue
+
             target = docs / _category_path(
                 index,
                 node,
@@ -263,6 +330,11 @@ def _write_category_pages(
         (n for n in index.nodes.values() if not n.is_group),
         key=lambda n: n.title.casefold(),
     ):
+        items = by_category.get(node.key, [])
+
+        if not items:
+            continue
+
         ancestors = _group_ancestors(
             index,
             node,
@@ -279,7 +351,7 @@ def _write_category_pages(
         icon_prefix = "../" * relative_depth
 
         headers, rows = _rows(
-            by_category.get(node.key, []),
+            items,
             index,
             icon_index,
             icon_out,
@@ -295,10 +367,7 @@ def _write_category_pages(
 
         generated.append(str(output.relative_to(docs)).replace("\\", "/"))
 
-        print(
-            f"\tGENERATED {output.relative_to(docs).as_posix()} "
-            f"({len(by_category.get(node.key, []))} items)"
-        )
+        print(f"\tGENERATED {output.relative_to(docs).as_posix()} ({len(items)} items)")
 
     return generated
 
@@ -348,6 +417,7 @@ def generate(
         index,
         docs,
         item_index,
+        by_category,
     )
 
     markdown.write_tree_page(
