@@ -234,17 +234,6 @@ def _category_link(
     return _relative_link(source, target)
 
 
-def _group_link(
-    index: category.CategoryIndex,
-    node: category.CategoryNode,
-    docs: Path,
-    source: Path,
-) -> str:
-    target = docs / _group_path(index, node)
-
-    return _relative_link(source, target)
-
-
 def _relative_link(source: Path, target: Path) -> str:
     import os
 
@@ -296,6 +285,7 @@ def _group_tree(
     by_category,
     docs: Path,
     source: Path,
+    indent: int = 0,
 ) -> list[str]:
     lines: list[str] = []
 
@@ -311,19 +301,24 @@ def _group_tree(
         key=lambda child: child.title.casefold(),
     )
 
+    prefix = "  " * indent
+
     for child in children:
         if child.is_group:
+            categories = _categories_under(
+                index,
+                child,
+                by_category,
+            )
+
+            if not categories:
+                continue
+
             if _is_single_category_group(
                 index,
                 child,
                 by_category,
             ):
-                categories = _categories_under(
-                    index,
-                    child,
-                    by_category,
-                )
-
                 link = _category_link(
                     index,
                     categories[0],
@@ -331,15 +326,22 @@ def _group_tree(
                     source,
                     by_category,
                 )
+
+                lines.append(f"{prefix}- [{child.title}]({link})")
             else:
-                link = _group_link(
-                    index,
-                    child,
-                    docs,
-                    source,
+                lines.append(f"{prefix}- {child.title}")
+
+                lines.extend(
+                    _group_tree(
+                        index,
+                        child,
+                        by_category,
+                        docs,
+                        source,
+                        indent + 1,
+                    )
                 )
 
-            lines.append(f"- [{child.title}]({link})")
             continue
 
         link = _category_link(
@@ -350,7 +352,7 @@ def _group_tree(
             by_category,
         )
 
-        lines.append(f"- [{child.title}]({link})")
+        lines.append(f"{prefix}- [{child.title}]({link})")
 
     return lines
 
@@ -363,6 +365,8 @@ def _write_category_pages(
     icon_out: Path,
 ) -> list[dict]:
     pages: list[dict] = []
+
+    root_groups = {node.key: node for node in index.roots() if node.is_group}
 
     for node in sorted(
         (n for n in index.nodes.values() if not n.is_group),
@@ -386,45 +390,27 @@ def _write_category_pages(
 
         parent = None
         parent_path = None
-        grand_parent = None
-        grand_parent_path = None
 
-        ancestor_pages = [
-            (
-                ancestor,
-                docs
-                / _group_path(
-                    index,
-                    ancestor,
-                ),
-            )
-            for ancestor in ancestors
-        ]
+        if ancestors:
+            root_group = ancestors[0]
 
-        valid_ancestors = [
-            (ancestor, path) for ancestor, path in ancestor_pages if path != output
-        ]
-
-        if valid_ancestors:
-            parent_node, parent_output = valid_ancestors[-1]
-
-            parent = parent_node.title
-            parent_path = parent_output.relative_to(
-                docs,
-            ).as_posix()
-
-            parent_index = ancestors.index(parent_node)
-
-            if parent_index > 0:
-                grand_parent_node = ancestors[parent_index - 1]
-                grand_parent_output = docs / _group_path(
-                    index,
-                    grand_parent_node,
+            if root_group.key in root_groups and _group_page_needed(
+                root_group,
+                by_category,
+                index,
+            ):
+                parent = root_group.title
+                parent_path = (
+                    (
+                        docs
+                        / _group_path(
+                            index,
+                            root_group,
+                        )
+                    )
+                    .relative_to(docs)
+                    .as_posix()
                 )
-
-                if grand_parent_output != parent_output:
-                    grand_parent = grand_parent_node.title
-                    grand_parent_path = grand_parent_output.relative_to(docs).as_posix()
 
         relative_depth = len(output.relative_to(docs).parts) - 1
         icon_prefix = "../" * relative_depth
@@ -444,8 +430,6 @@ def _write_category_pages(
             headers=headers,
             parent=parent,
             parent_path=parent_path,
-            grand_parent=grand_parent,
-            grand_parent_path=grand_parent_path,
         )
 
         relative = output.relative_to(docs).as_posix()
@@ -473,7 +457,7 @@ def _write_group_pages(
     groups = sorted(
         (
             node
-            for node in index.nodes.values()
+            for node in index.roots()
             if (
                 node.is_group
                 and _has_items(node, by_category, index)
@@ -493,73 +477,26 @@ def _write_group_pages(
             node,
         )
 
-        source = output
+        tree = _group_tree(
+            index,
+            node,
+            by_category,
+            docs,
+            output,
+        )
 
-        links = []
-
-        for child in sorted(
-            (
-                child
-                for child in index.children(
-                    node,
-                    categories_only=False,
-                )
-                if _has_items(
-                    child,
-                    by_category,
-                    index,
-                )
-            ),
-            key=lambda child: child.title.casefold(),
-        ):
-            if child.is_group:
-                if _is_single_category_group(
-                    index,
-                    child,
-                    by_category,
-                ):
-                    categories = _categories_under(
-                        index,
-                        child,
-                        by_category,
-                    )
-
-                    target = docs / _category_path(
-                        index,
-                        categories[0],
-                        by_category,
-                    )
-                else:
-                    target = docs / _group_path(
-                        index,
-                        child,
-                    )
-            else:
-                target = docs / _category_path(
-                    index,
-                    child,
-                    by_category,
-                )
-
-            links.append(
-                (
-                    child.title,
-                    _relative_link(
-                        source,
-                        target,
-                    ),
-                )
-            )
-
-        markdown.write_page(
+        markdown.write_tree_page(
             output,
             node.title,
-            links=links,
+            tree,
         )
 
         relative = output.relative_to(docs).as_posix()
 
-        print(f"\tGENERATED {relative} ({len(links)} categories)")
+        print(
+            f"\tGENERATED {relative} "
+            f"({len(_categories_under(index, node, by_category))} categories)"
+        )
 
         pages.append(
             {
