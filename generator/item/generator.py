@@ -384,6 +384,29 @@ def _write_category_pages(
             node,
         )
 
+        parent = None
+        parent_path = None
+        grand_parent = None
+        grand_parent_path = None
+
+        if ancestors:
+            parent_node = ancestors[-1]
+
+            parent = parent_node.title
+            parent_path = _group_path(
+                index,
+                parent_node,
+            )
+
+            if len(ancestors) > 1:
+                grand_parent_node = ancestors[-2]
+
+                grand_parent = grand_parent_node.title
+                grand_parent_path = _group_path(
+                    index,
+                    grand_parent_node,
+                )
+
         relative_depth = len(output.relative_to(docs).parts) - 1
         icon_prefix = "../" * relative_depth
 
@@ -400,6 +423,10 @@ def _write_category_pages(
             node.title,
             rows=rows,
             headers=headers,
+            parent=parent,
+            parent_path=parent_path,
+            grand_parent=grand_parent,
+            grand_parent_path=grand_parent_path,
         )
 
         relative = output.relative_to(docs).as_posix()

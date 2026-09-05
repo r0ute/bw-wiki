@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..navigation import breadcrumb_include
+from ..navigation import breadcrumb_include, navigation_metadata
 
 
 def markdown_value(value):
@@ -43,11 +43,24 @@ def render_table(
     return lines
 
 
-def _front_matter(title: str) -> list[str]:
+def _front_matter(
+    title: str,
+    *,
+    parent: str | None = None,
+    parent_path: str | None = None,
+    grand_parent: str | None = None,
+    grand_parent_path: str | None = None,
+) -> list[str]:
     return [
         "---",
         "layout: default",
         f"title: {json.dumps(title)}",
+        *navigation_metadata(
+            parent=parent,
+            parent_path=parent_path,
+            grand_parent=grand_parent,
+            grand_parent_path=grand_parent_path,
+        ),
         "---",
         "",
         *breadcrumb_include(),
@@ -60,9 +73,19 @@ def render_page(
     rows=None,
     headers=None,
     links=None,
+    parent=None,
+    parent_path=None,
+    grand_parent=None,
+    grand_parent_path=None,
 ):
     lines = [
-        *_front_matter(title),
+        *_front_matter(
+            title,
+            parent=parent,
+            parent_path=parent_path,
+            grand_parent=grand_parent,
+            grand_parent_path=grand_parent_path,
+        ),
         f"# {title}",
         "",
     ]
@@ -92,6 +115,10 @@ def write_page(
     rows=None,
     headers=None,
     links=None,
+    parent=None,
+    parent_path=None,
+    grand_parent=None,
+    grand_parent_path=None,
 ):
     output.parent.mkdir(
         parents=True,
@@ -104,6 +131,10 @@ def write_page(
             rows=rows,
             headers=headers,
             links=links,
+            parent=parent,
+            parent_path=parent_path,
+            grand_parent=grand_parent,
+            grand_parent_path=grand_parent_path,
         ),
         encoding="utf-8",
     )
