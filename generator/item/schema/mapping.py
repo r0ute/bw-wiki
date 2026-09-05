@@ -8,12 +8,12 @@ from typing import Any
 CATEGORY_SCHEMA_OVERRIDES = {
     "Decorations": "minimal",
     "Equipment": "minimal",
-    "Knowledge Books": "minimal",
+    "KnowledgeBooks": "minimal",
     "Medicine": "minimal",
     "Liquids": "minimal",
     "Other": "minimal",
     "Resources": "minimal",
-    "Quest Item": "minimal",
+    "QuestItem": "minimal",
     "Seeds": "minimal",
 }
 
